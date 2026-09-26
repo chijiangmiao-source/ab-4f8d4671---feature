@@ -16,6 +16,9 @@
 // 不可诊断 ⇔ 从初态可达的某个 f=1 SCC 中，存在一条“合格闭环”：
 // 闭环内既有移动故障副本的边、又有移动正常副本的边（因此闭环重复时
 // 两侧都是无限执行；仅故障副本静默自环、正常侧停滞不算）。
+//
+// 确诊延迟审计（可诊断后的故障后最大伪装回执数）见 delay.mjs，
+// 它复用本文件的 verifier 构造、SCC 与最短路原语继续精确分析。
 
 export function buildVerifier(model) {
   const { init, transitions } = model;
@@ -143,7 +146,7 @@ export function tarjan(vs) {
   return { compOf, comps };
 }
 
-function reachable(start) {
+export function reachable(start) {
   const seen = new Set([start]);
   const q = [start];
   for (let h = 0; h < q.length; h++) {
@@ -154,14 +157,14 @@ function reachable(start) {
   return seen;
 }
 
-const edgeKey = (e) =>
+export const edgeKey = (e) =>
   `${e.fTrans?.id ?? ''}|${e.nTrans?.id ?? ''}|${e.mode}`;
 const recvCount = (edges) => edges.filter((e) => e.receipt !== null).length;
 const pathKey = (edges) => edges.map(edgeKey).join(',');
-const edgeWeight = (e) => (e.mode === 'SYNC' ? 1 : 0);
+export const edgeWeight = (e) => (e.mode === 'SYNC' ? 1 : 0);
 
 // 简易二叉堆，按 (cost, key) 排序
-function heap() {
+export function heap() {
   const a = [];
   const less = (x, y) => x[0] - y[0] || (x[2] < y[2] ? -1 : x[2] > y[2] ? 1 : 0);
   const up = (i) => {
@@ -189,7 +192,7 @@ function heap() {
 }
 
 // 全目标 Dijkstra：返回每个可达节点的最优记录（cost 最小，平局路径标识键最小）
-function dijkstraAll(start) {
+export function dijkstraAll(start) {
   const h = heap();
   const best = new Map();
   const startRec = { cost: 0, parent: null, node: start, pathKey: '' };
@@ -221,7 +224,7 @@ function recToEdges(rec) {
 }
 
 // 初态到目标 verifier 状态的最短通路（静默权 0、同步权 1）
-function shortestPath(allBest, start, goal) {
+export function shortestPath(allBest, start, goal) {
   if (start === goal) return [];
   const rec = allBest.get(goal.id);
   return rec ? recToEdges(rec) : null;
@@ -349,7 +352,7 @@ export function diagnose(model) {
   };
 }
 
-function edgeView(e) {
+export function edgeView(e) {
   return {
     mode: e.mode,
     receipt: e.receipt,

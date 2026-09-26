@@ -142,6 +142,96 @@ trans n1 0 2 N a
   const h = await r.json();
   expect(h.activeJobs === 0, '取消/完成后无残留任务');
 
+  // 7) 确诊延迟审计
+  // 7a) 带静默的有限上界模型：静默故障 + 两个同步 a（夹一步静默）⇒ 延迟 2
+  const delayCase = `loc 0
+loc 1
+loc 2
+loc 3
+loc 4
+loc 5
+init 0
+trans f1 0 1 F SILENT
+trans g1 1 2 N a
+trans g2 2 3 N SILENT
+trans g3 3 4 N a
+trans g4 4 4 N c
+trans n1 0 5 N a
+trans n2 5 5 N a
+`;
+  r = await fetch(`${base}/api/delay`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d1', spec: delayCase }),
+  });
+  payload = await r.json();
+  expect(r.status === 200, '延迟审计 API 200');
+  expect(payload.result?.diagnosable === true, '有限上界模型仍判可诊断');
+  expect(payload.result?.delay?.value === 2, '确诊延迟为 2（静默不计、同回执同步计 1）');
+  const dw = payload.result?.delay?.witness;
+  expect(dw?.preFaultReceipts === 0, '故障静默：故障前共同回执长度 0');
+  expect(Array.isArray(dw?.tail) &&
+    dw.tail.filter((x) => x.mode === 'SYNC').length === 2 &&
+    dw.tail.some((x) => x.mode === 'F_SILENT'),
+    '逐步对应含 2 个同步回执与 1 步故障侧静默');
+  expect(dw?.nextDistinguishing?.receipt === 'c', '下一可区分回执为 c');
+  expect(dw?.sequencesIdentical === true, '前缀+延迟段两侧回执序列一致');
+
+  // 7b) 无界模型：复用不可诊断结论，不给有限数字
+  r = await fetch(`${base}/api/delay`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d2', spec: silentCase }),
+  });
+  payload = await r.json();
+  expect(payload.result?.diagnosable === false, '无界伪装 ⇒ 复用不可诊断结论');
+  expect(payload.result?.delayUnbounded === true, '标注延迟无界');
+  expect(payload.result?.delay === undefined, '不给出有限延迟数字');
+  expect(Boolean(payload.result?.witness?.loop?.length), '保留原不可诊断证据');
+
+  // 7c) 死路不计入上界：b 分支 3 步同步后双侧死路；仅 a 分支可无限延续 ⇒ 延迟 1
+  const deadEndCase = `loc 0
+loc 1
+loc 2
+loc 3
+loc 4
+loc 5
+loc 6
+loc 7
+loc 8
+loc 9
+init 0
+trans f1 0 1 F SILENT
+trans ga 1 2 N a
+trans gc 2 2 N c
+trans gb1 1 3 N b
+trans gb2 3 4 N b
+trans gb3 4 5 N b
+trans na 0 6 N a
+trans na2 6 6 N a
+trans nb1 0 7 N b
+trans nb2 7 8 N b
+trans nb3 8 9 N b
+`;
+  r = await fetch(`${base}/api/delay`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d3', spec: deadEndCase }),
+  });
+  payload = await r.json();
+  expect(payload.result?.diagnosable === true, '死路例仍判可诊断');
+  expect(payload.result?.delay?.value === 1, '死路不计入上界：延迟为 1 而非 3');
+
+  // 7d) 旧规程回归：原判定接口结论与证据形状不变、不附带延迟
+  r = await fetch(`${base}/api/analyze`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d4', spec: delayCase }),
+  });
+  payload = await r.json();
+  expect(payload.result?.diagnosable === true, '原接口仍判可诊断');
+  expect(payload.result?.delay === undefined, '原接口不附带延迟结论（原有提交保持不变）');
+
   cancelJob?.('not-a-job'); // 覆盖取消不存在任务的路径
   if (server) await new Promise((r) => server.close(r));
   console.log(failures === 0 ? '\n[verify] HTTP 冒烟全部通过' : `\n[verify] HTTP 冒烟失败 ${failures} 处`);
@@ -151,7 +241,7 @@ trans n1 0 2 N a
 async function main() {
   console.log('[verify] 1/4 构建检查（node --check 所有源文件）');
   const files = [
-    'server.js', 'src/parser.mjs', 'src/diagnoser.mjs',
+    'server.js', 'src/parser.mjs', 'src/diagnoser.mjs', 'src/delay.mjs',
     'src/analyze.mjs', 'src/worker.mjs', 'public/app.js',
     'scripts/fuzz.mjs', 'scripts/verify.mjs',
   ];

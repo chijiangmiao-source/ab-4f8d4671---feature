@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
-import { analyze } from './src/analyze.mjs';
+import { analyze, analyzeDelay } from './src/analyze.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(__dirname, 'public');
@@ -22,10 +22,10 @@ const MIME = {
 // 活动判定任务：jobId -> { worker, finished }
 const jobs = new Map();
 
-function runJob(jobId, spec, { useWorker = true } = {}) {
+function runJob(jobId, spec, { useWorker = true, kind = 'analyze' } = {}) {
   return new Promise((resolve, reject) => {
     if (!useWorker) {
-      try { resolve(analyze(spec)); } catch (e) { reject(e); }
+      try { resolve((kind === 'delay' ? analyzeDelay : analyze)(spec)); } catch (e) { reject(e); }
       return;
     }
     const worker = new Worker(join(__dirname, 'src', 'worker.mjs'));
@@ -55,7 +55,7 @@ function runJob(jobId, spec, { useWorker = true } = {}) {
       jobs.delete(jobId);
       reject(err);
     });
-    worker.postMessage({ type: 'run', jobId, spec });
+    worker.postMessage({ type: 'run', jobId, spec, kind });
   });
 }
 
@@ -85,7 +85,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/analyze') {
+    if (req.method === 'POST' &&
+        (url.pathname === '/api/analyze' || url.pathname === '/api/delay')) {
       const body = await readJson(req, 2 * 1024 * 1024);
       const jobId = String(body?.jobId ?? '');
       const spec = String(body?.spec ?? '');
@@ -96,7 +97,8 @@ const server = http.createServer(async (req, res) => {
       // 同号任务也先作废，避免孤儿 worker；新规程取代旧任务同样终止
       cancelJob(jobId);
       if (supersedes) cancelJob(supersedes);
-      const result = await runJob(jobId, spec);
+      const kind = url.pathname === '/api/delay' ? 'delay' : 'analyze';
+      const result = await runJob(jobId, spec, { kind });
       return sendJson(res, 200, { jobId, result });
     }
 
