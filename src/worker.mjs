@@ -5,7 +5,7 @@ import { analyze } from './analyze.mjs';
 parentPort.on('message', (msg) => {
   if (msg?.type !== 'run') return;
   try {
-    const result = analyze(msg.spec);
+    const result = analyze(msg.spec, { mode: msg.mode === 'delay' ? 'delay' : 'diagnose' });
     parentPort.postMessage({ type: 'result', jobId: msg.jobId, result });
   } catch (err) {
     parentPort.postMessage({

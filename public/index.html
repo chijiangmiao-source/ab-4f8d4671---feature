@@ -30,11 +30,13 @@
     </div>
     <div class="toolbar">
       <button id="submit" type="button">提交判定</button>
+      <button id="delay-audit" type="button" disabled>发起确诊延迟审计</button>
       <button id="cancel" type="button" disabled>取消计算</button>
       <span id="dirty" class="dirty-flag" hidden>规程已修改 · 当前结果可能过期</span>
       <span class="spacer"></span>
       <button class="linklike" id="load-silent" type="button">示例：静默双环（不可诊断）</button>
       <button class="linklike" id="load-diag" type="button">示例：可诊断回执</button>
+      <button class="linklike" id="load-delay" type="button">示例：静默有限上界（延迟审计）</button>
     </div>
     <div id="errors" class="errors" hidden></div>
   </section>

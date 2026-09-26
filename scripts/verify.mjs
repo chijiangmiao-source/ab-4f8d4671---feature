@@ -113,6 +113,101 @@ trans n1 0 2 N a
   expect(Boolean(dangling) && dangling.line === 3 && dangling.column === 12,
     '悬空目标定位到第 3 行第 12 列');
 
+  // 4a) 延迟审计 · 带静默的有限上界模型（延迟恰为 2，静默不计数，死路不计入）
+  const delayBounded = `loc 0
+loc 1
+loc 2
+loc 3
+loc 4
+loc 5
+loc 6
+loc 7
+loc 8
+loc 9
+init 0
+trans f1 0 1 F SILENT
+trans fa 1 2 N a
+trans fsl 2 3 N SILENT
+trans fb 3 4 N b
+trans fx 4 4 N x
+trans ne 0 5 N SILENT
+trans na 5 6 N a
+trans nb 6 7 N b
+trans ny 7 7 N y
+trans fA 0 8 F a
+trans fz 8 8 N z
+trans g0 0 9 N a
+`;
+  r = await fetch(`${base}/api/analyze`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d1', mode: 'delay', spec: delayBounded }),
+  });
+  payload = await r.json();
+  const dw = payload.result;
+  expect(r.status === 200, '有限上界延迟审计 API 200');
+  expect(dw?.ok === true && dw?.mode === 'delay', '延迟审计返回 mode=delay');
+  expect(dw?.finite === true && dw?.delay === 2, '静默有限上界模型延迟恰为 2');
+  expect(JSON.stringify(dw?.witness?.delayObservable) === JSON.stringify(['a', 'b']),
+    '达到最大延迟的共同回执为 a、b（静默 fsl 不计数）');
+  expect(dw?.witness?.nextDistinguishing?.distinguished === true,
+    '下一可区分回执两侧候选不相交');
+  expect(JSON.stringify(dw?.witness?.nextDistinguishing?.faultyReceipts) === JSON.stringify(['x']) &&
+    JSON.stringify(dw?.witness?.nextDistinguishing?.normalReceipts) === JSON.stringify(['y']),
+    '下一可区分回执：故障侧 x、正常侧 y');
+  expect(dw?.deadEndSeedCount === 1, '正常侧止于汇点 9 的故障对为死路，不计入上界');
+
+  // 4b) 延迟审计 · 无界模型必须复用不可诊断结论、不得给出有限数字
+  r = await fetch(`${base}/api/analyze`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d2', mode: 'delay', spec: silentCase }),
+  });
+  payload = await r.json();
+  const du = payload.result;
+  expect(r.status === 200, '无界延迟审计 API 200');
+  expect(du?.finite === false && du?.delay === null, '无界模型不给出有限延迟数字');
+  expect(du?.diagnosable === false && Boolean(du?.reusedNondiagWitness),
+    '无界模型复用现有不可诊断结论与证据');
+
+  // 4c) 延迟审计 · 死路模型（正常侧匹配后止于汇点）延迟为 0、无证据
+  const delayDead = `loc 0
+loc 1
+loc 2
+loc 3
+loc 4
+loc 5
+init 0
+trans f1 0 1 F a
+trans fb 1 2 N b
+trans fx 2 2 N x
+trans na 0 3 N a
+trans nb 3 5 N b
+trans zz 4 4 N y
+`;
+  r = await fetch(`${base}/api/analyze`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d3', mode: 'delay', spec: delayDead }),
+  });
+  payload = await r.json();
+  const dd = payload.result;
+  expect(r.status === 200, '死路延迟审计 API 200');
+  expect(dd?.finite === true && dd?.delay === 0 && dd?.witness === null,
+    '死路不计入上界：延迟 0 且无延迟证据');
+  expect(dd?.seedCount === 0 && dd?.deadEndSeedCount === 1,
+    '唯一故障对为双侧不皆活的死路对');
+
+  // 4d) 旧规程回归：原判定模式（不带 mode）对静默双环/可诊断例结论不变
+  r = await fetch(`${base}/api/analyze`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobId: 'smoke-d4', spec: delayBounded }),
+  });
+  payload = await r.json();
+  expect(payload.result?.mode === 'diagnose' && payload.result?.diagnosable === true,
+    '回归：有限上界模型在原判定模式下仍判可诊断，证据结构不变');
+
   // 5) 静态页面与资源
   r = await fetch(`${base}/`);
   expect(r.status === 200 && (await r.text()).includes('故障闭环审计'), '页面可访问');

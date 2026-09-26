@@ -22,10 +22,10 @@ const MIME = {
 // 活动判定任务：jobId -> { worker, finished }
 const jobs = new Map();
 
-function runJob(jobId, spec, { useWorker = true } = {}) {
+function runJob(jobId, spec, { useWorker = true, mode = 'diagnose' } = {}) {
   return new Promise((resolve, reject) => {
     if (!useWorker) {
-      try { resolve(analyze(spec)); } catch (e) { reject(e); }
+      try { resolve(analyze(spec, { mode })); } catch (e) { reject(e); }
       return;
     }
     const worker = new Worker(join(__dirname, 'src', 'worker.mjs'));
@@ -55,7 +55,7 @@ function runJob(jobId, spec, { useWorker = true } = {}) {
       jobs.delete(jobId);
       reject(err);
     });
-    worker.postMessage({ type: 'run', jobId, spec });
+    worker.postMessage({ type: 'run', jobId, spec, mode });
   });
 }
 
@@ -90,13 +90,14 @@ const server = http.createServer(async (req, res) => {
       const jobId = String(body?.jobId ?? '');
       const spec = String(body?.spec ?? '');
       const supersedes = body?.supersedes ? String(body.supersedes) : null;
+      const mode = body?.mode === 'delay' ? 'delay' : 'diagnose';
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(jobId)) {
         return sendJson(res, 400, { error: '非法 jobId' });
       }
       // 同号任务也先作废，避免孤儿 worker；新规程取代旧任务同样终止
       cancelJob(jobId);
       if (supersedes) cancelJob(supersedes);
-      const result = await runJob(jobId, spec);
+      const result = await runJob(jobId, spec, { mode });
       return sendJson(res, 200, { jobId, result });
     }
 
